@@ -116,7 +116,7 @@ public class StudentService extends Service {
 
         @Override
         public void setDistanceUnit(int unit) throws RemoteException {
-            if (testCapability.isDistanceSupported()) return;
+            if (!testCapability.isDistanceSupported()) return;
             PropertyEvent propertyDistanceEvent = new PropertyEvent(IPropertyService.PROP_DISTANCE_UNIT, PropertyEvent.STATUS_AVAILABLE, unit);
             iPropertyService.setProperty(propertyDistanceEvent);
         }
