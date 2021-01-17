@@ -31,18 +31,19 @@ public class StudentService extends Service {
 
     // get form IHM
     private IHMIListener ihmiListener;
+    private TestCapability testCapability;
 
-    private HandlerThread handlerThread = new HandlerThread("handle_thread_in_student");
-    private Handler handler;
 
     // receive form EUC
     private ICoreService iCoreService;
     private IPropertyService iPropertyService;
     private IConfigurationService iConfigurationService;
 
-    private TestCapability testCapability;
+    private HandlerThread handlerThreadMessage = new HandlerThread("handle_thread_for_message");
+    private Handler handlerMessage;
+    private Handler handlerSleep = new Handler();
 
-    private boolean failedClick = false;
+
     private boolean firstUnit = true;
     private int numberSignal;
 
@@ -54,16 +55,17 @@ public class StudentService extends Service {
     private static final String CORE_SERVICE_ACTION = "dcv.finaltest.BIND";
     private static final String CORE_SERVICE_PACKAGE = "dcv.test.servicecore";
 
+
     public StudentService() {
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        Log.d(TAG, "onCreate: xxxxxxxxxxxxxxxxxxxxxxxxxx");
+        Log.d(TAG, "onCreate: ");
         bindCoreService();
-        handlerThread.start();
-        handler = new Handler(handlerThread.getLooper()) {
+        handlerThreadMessage.start();
+        handlerMessage = new Handler(handlerThreadMessage.getLooper()) {
             @Override
             public void handleMessage(@NonNull Message msg) {
                 super.handleMessage(msg);
@@ -76,28 +78,32 @@ public class StudentService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        urRegisterProperty();
+        Log.d(TAG, "*********************************************************************");
+        Log.d(TAG, "onDestroy: Student Service");
+        Log.d(TAG, "*********************************************************************");
         unbindService(coreServiceConnection);
-        handlerThread.quit();
+        handlerThreadMessage.quit();
     }
 
     @Override
     public IBinder onBind(Intent intent) {
         Log.d(TAG, "onBind in Student Service ");
-        return sBinder;
+        return studentServiceBinder;
     }
 
 
-    private Binder sBinder = new IStudentInterface.Stub() {
+    private Binder studentServiceBinder = new IStudentInterface.Stub() {
         @Override
         public void registerListener(IHMIListener listener) throws RemoteException {
             Log.d(TAG, "registerListener run: ");
             ihmiListener = listener;
+            registerProperty();
         }
 
         @Override
         public void unregisterListener(IHMIListener listener) throws RemoteException {
             Log.d(TAG, "unregisterListener: ");
+            unRegisterProperty();
             ihmiListener = null;
         }
 
@@ -116,26 +122,25 @@ public class StudentService extends Service {
 
         @Override
         public void setDistanceUnit(int unit) throws RemoteException {
-            if (!testCapability.isDistanceSupported()) return;
+            Log.d(TAG, "setDistanceUnit: ");
             PropertyEvent propertyDistanceEvent = new PropertyEvent(IPropertyService.PROP_DISTANCE_UNIT, PropertyEvent.STATUS_AVAILABLE, unit);
             iPropertyService.setProperty(propertyDistanceEvent);
         }
 
         @Override
         public void setConsumptionUnit(int unit) throws RemoteException {
-            if (!testCapability.isConsumptionSupported()) return;
+            Log.d(TAG, "setConsumptionUnit: ");
             PropertyEvent propertyConsumptionEven = new PropertyEvent(IPropertyService.PROP_CONSUMPTION_UNIT, PropertyEvent.STATUS_AVAILABLE, unit);
             iPropertyService.setProperty(propertyConsumptionEven);
         }
 
         @Override
         public void resetData() throws RemoteException {
-            failedClick = false;
+            Log.d(TAG, "resetData: ");
             PropertyEvent propertyResetDataEvent = new PropertyEvent(IPropertyService.PROP_RESET, PropertyEvent.STATUS_AVAILABLE, true);
             iPropertyService.setProperty(propertyResetDataEvent);
-            if (ihmiListener != null) {
-                firstUnit = true;
-            }
+            // rest chart consumption value change
+            firstUnit = true;
         }
     };
 
@@ -152,168 +157,157 @@ public class StudentService extends Service {
         public void onServiceConnected(ComponentName name, IBinder service) {
             Log.d(TAG, "onServiceConnected: coreServiceConnection");
             iCoreService = ICoreService.Stub.asInterface(service);
-            if (iCoreService != null) {
-                try {
-                    iPropertyService = iCoreService.getPropertyService();
-                    iConfigurationService = iCoreService.getConfigurationService();
-                } catch (RemoteException e) {
-                    e.printStackTrace();
-                }
-                // register property
-                registerProperty();
+            if (iCoreService == null) return;
+            try {
+                iPropertyService = iCoreService.getPropertyService();
+                iConfigurationService = iCoreService.getConfigurationService();
+            } catch (RemoteException e) {
+                e.printStackTrace();
             }
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
+            Log.d(TAG, "*********************************************************************");
+            unRegisterProperty();
+            Log.d(TAG, "*********************************************************************");
+            Log.d(TAG, "onServiceDisconnected: coreServiceConnection");
 
         }
     };
 
     private void handleEventMessage(Message msg) {
-        PropertyEvent propertyEvent = (PropertyEvent) msg.obj;
-        Log.d(TAG, "------------------------------------------------------------");
-        Log.d(TAG, "Message msg arg1: " + msg.arg1);
-        Log.d(TAG, "Message msg arg2: " + msg.arg2);
-        Log.d(TAG, "Message what: " + msg.what);
-        Log.d(TAG, "Property Event Id: " + propertyEvent.getPropertyId());
-        Log.d(TAG, "Property Event Status: " + propertyEvent.getStatus());
-        Log.d(TAG, "Property Event Value: " + propertyEvent.getValue());
-        Log.d(TAG, "------------------------------------------------------------");
+        if (ihmiListener == null) return;
         if (msg.what == MESSAGE_EVENT_REGISTER_LISTENER) {
-            if (propertyEvent != null) {
-                if (ihmiListener != null) {
-                    switch (propertyEvent.getPropertyId()) {
-                        case IPropertyService.PROP_DISTANCE_UNIT:
-                            Log.d(TAG, "------------------------------------------------------------");
-                            Log.d(TAG, "on distance unit ");
-                            Log.d(TAG, "Property distance unit Value: " + propertyEvent.getValue());
-                            Log.d(TAG, "------------------------------------------------------------");
+            PropertyEvent propertyEvent = (PropertyEvent) msg.obj;
+            if (propertyEvent == null) return;
+            if (propertyEvent.getStatus() == PropertyEvent.STATUS_AVAILABLE) {
+                switch (propertyEvent.getPropertyId()) {
+                    case IPropertyService.PROP_DISTANCE_UNIT:
+                        Log.d(TAG, "------------------------------------------------------------");
+                        Log.d(TAG, "on distance unit ");
+                        Log.d(TAG, "Property distance unit Value: " + propertyEvent.getValue());
+                        Log.d(TAG, "------------------------------------------------------------");
+                        try {
+                            ihmiListener.onDistanceUnitChanged((Integer) propertyEvent.getValue());
+                        } catch (RemoteException e) {
+                            e.printStackTrace();
+                        }
+                        break;
+
+                    case IPropertyService.PROP_DISTANCE_VALUE:
+                        Log.d(TAG, "------------------------------------------------------------");
+                        Log.d(TAG, "on distance value");
+                        Log.d(TAG, "Property distance value Value: " + propertyEvent.getValue());
+                        Log.d(TAG, "------------------------------------------------------------");
+                        try {
+                            ihmiListener.onDistanceChanged((Double) propertyEvent.getValue());
+                        } catch (RemoteException e) {
+                            e.printStackTrace();
+                        }
+                        break;
+
+                    case IPropertyService.PROP_CONSUMPTION_UNIT:
+                        Log.d(TAG, "------------------------------------------------------------");
+                        Log.d(TAG, "on consumption unit ");
+                        Log.d(TAG, "Property consumption unit Value: " + propertyEvent.getValue());
+                        Log.d(TAG, "------------------------------------------------------------");
+                        try {
+                            ihmiListener.OnConsumptionUnitChanged((Integer) propertyEvent.getValue());
+                        } catch (RemoteException e) {
+                            e.printStackTrace();
+                        }
+                        break;
+
+                    case IPropertyService.PROP_CONSUMPTION_VALUE:
+                        Log.d(TAG, "------------------------------------------------------------");
+                        Log.d(TAG, "on consumption value");
+                        Log.d(TAG, "Property consumption value Value: " + propertyEvent.getValue());
+                        Log.d(TAG, "------------------------------------------------------------");
+                        if (firstUnit) {
                             try {
-                                ihmiListener.onDistanceUnitChanged((Integer) propertyEvent.getValue());
+                                consumptionList = new double[15];
+                                ihmiListener.onConsumptionChanged(consumptionList);
+                                firstUnit = false;
                             } catch (RemoteException e) {
                                 e.printStackTrace();
                             }
                             break;
-
-                        case IPropertyService.PROP_DISTANCE_VALUE:
-                            Log.d(TAG, "------------------------------------------------------------");
-                            Log.d(TAG, "on distance value");
-                            Log.d(TAG, "Property distan vaule Value: " + propertyEvent.getValue());
-                            Log.d(TAG, "------------------------------------------------------------");
+                        }
+                        numberSignal++;
+                        currentConsumption += (double) propertyEvent.getValue();
+                        if (numberSignal == NUMBER_OF_SIGNAL_PER_MINUTE) {
+                            currentConsumption = currentConsumption / NUMBER_OF_SIGNAL_PER_MINUTE;
+                            for (int i = 0; i < 14; i++) {
+                                consumptionList[i] = consumptionList[i + 1];
+                            }
+                            consumptionList[14] = currentConsumption;
                             try {
-                                ihmiListener.onDistanceChanged((Double) propertyEvent.getValue());
+                                ihmiListener.onConsumptionChanged(consumptionList);
                             } catch (RemoteException e) {
                                 e.printStackTrace();
                             }
-                            break;
+                            numberSignal = 0;
+                            currentConsumption = 0;
+                        }
+                        break;
 
-                        case IPropertyService.PROP_CONSUMPTION_UNIT:
-                            Log.d(TAG, "------------------------------------------------------------");
-                            Log.d(TAG, "on consumption unit ");
-                            Log.d(TAG, "Property consumption unit Value: " + propertyEvent.getValue());
-                            Log.d(TAG, "------------------------------------------------------------");
-                            if (failedClick) break;
-                            try {
-                                ihmiListener.OnConsumptionUnitChanged((Integer) propertyEvent.getValue());
-                            } catch (RemoteException e) {
-                                e.printStackTrace();
-                            }
-                            break;
+                    case IPropertyService.PROP_RESET:
+                        Log.d(TAG, "------------------------------------------------------------");
+                        Log.d(TAG, "on reset");
+                        Log.d(TAG, "Property reset Value: " + propertyEvent.getValue());
+                        Log.d(TAG, "------------------------------------------------------------");
+                        try {
+                            ihmiListener.onError(true);
+                        } catch (RemoteException e) {
+                            e.printStackTrace();
+                        }
+                        sleep(handlerSleep, 1000);
+                        break;
 
-                        case IPropertyService.PROP_CONSUMPTION_VALUE:
-                            Log.d(TAG, "------------------------------------------------------------");
-                            Log.d(TAG, "on consumption value");
-                            Log.d(TAG, "Property consumption value Value: " + propertyEvent.getValue());
-                            Log.d(TAG, "------------------------------------------------------------");
-                            if (failedClick) break;
-                            if (firstUnit) {
-                                try {
-                                    consumptionList = new double[15];
-                                    ihmiListener.onConsumptionChanged(consumptionList);
-                                    firstUnit = false;
-                                } catch (RemoteException e) {
-                                    e.printStackTrace();
-                                }
-                                break;
-                            }
-                            numberSignal++;
-                            currentConsumption += (double) propertyEvent.getValue();
-                            if (numberSignal == NUMBER_OF_SIGNAL_PER_MINUTE) {
-                                currentConsumption = currentConsumption / NUMBER_OF_SIGNAL_PER_MINUTE;
-                                for (int i = 0; i < 14; i++) {
-                                    consumptionList[i] = consumptionList[i + 1];
-                                }
-                                consumptionList[14] = currentConsumption;
-                                try {
-                                    ihmiListener.onConsumptionChanged(consumptionList);
-                                } catch (RemoteException e) {
-                                    e.printStackTrace();
-                                }
-                                numberSignal = 0;
-                                currentConsumption = 0;
-                            }
-                            break;
-
-                        case IPropertyService.PROP_RESET:
-                            Log.d(TAG, "------------------------------------------------------------");
-                            Log.d(TAG, "on reset");
-                            Log.d(TAG, "Property reset Value: " + propertyEvent.getValue());
-                            Log.d(TAG, "------------------------------------------------------------");
-                            try {
-                                ihmiListener.onError(true);
-                            } catch (RemoteException e) {
-                                e.printStackTrace();
-                            }
-                            Handler handler = new Handler();
-                            handler.postDelayed(new Runnable() {
-                                @Override
-                                public void run() {
-                                    try {
-                                        ihmiListener.onError(false);
-                                    } catch (RemoteException e) {
-                                        e.printStackTrace();
-                                    }
-                                }
-                            }, 1000);
-                            break;
-
-                        default:
-                            break;
-                    }
+                    default:
+                        break;
                 }
             }
         } else if (msg.what == MESSAGE_EVENT_UNREGISTER_LISTENER) {
-
+            unRegisterProperty();
         }
     }
 
     private void registerProperty() {
-        if (iPropertyService != null) {
-            try {
+        Log.d(TAG, "registerProperty testCapability:  " + testCapability);
+        if (iPropertyService == null) return;
+        try {
+            if (testCapability.isDistanceSupported()) {
                 iPropertyService.registerListener(IPropertyService.PROP_DISTANCE_UNIT, eventRegister);
                 iPropertyService.registerListener(IPropertyService.PROP_DISTANCE_VALUE, eventRegister);
+            }
+            if (testCapability.isConsumptionSupported()) {
                 iPropertyService.registerListener(IPropertyService.PROP_CONSUMPTION_UNIT, eventRegister);
                 iPropertyService.registerListener(IPropertyService.PROP_CONSUMPTION_VALUE, eventRegister);
-                iPropertyService.registerListener(IPropertyService.PROP_RESET, eventRegister);
-            } catch (RemoteException e) {
-                e.printStackTrace();
             }
+            iPropertyService.registerListener(IPropertyService.PROP_RESET, eventRegister);
+        } catch (RemoteException e) {
+            e.printStackTrace();
         }
     }
 
-    private void urRegisterProperty() {
-        if (iPropertyService != null) {
-            try {
+    private void unRegisterProperty() {
+        if (iPropertyService == null) return;
+        try {
+            if (testCapability.isDistanceSupported()) {
                 iPropertyService.registerListener(IPropertyService.PROP_DISTANCE_UNIT, eventUnRegister);
                 iPropertyService.registerListener(IPropertyService.PROP_DISTANCE_VALUE, eventUnRegister);
+            }
+            if (testCapability.isConsumptionSupported()) {
                 iPropertyService.registerListener(IPropertyService.PROP_CONSUMPTION_UNIT, eventUnRegister);
                 iPropertyService.registerListener(IPropertyService.PROP_CONSUMPTION_VALUE, eventUnRegister);
-                iPropertyService.registerListener(IPropertyService.PROP_RESET, eventUnRegister);
-            } catch (RemoteException e) {
-                e.printStackTrace();
             }
+            iPropertyService.registerListener(IPropertyService.PROP_RESET, eventUnRegister);
+        } catch (RemoteException e) {
+            e.printStackTrace();
         }
+
     }
 
     private IPropertyEventListener.Stub eventRegister = new IPropertyEventListener.Stub() {
@@ -323,7 +317,7 @@ public class StudentService extends Service {
             Message message = Message.obtain();
             message.what = MESSAGE_EVENT_REGISTER_LISTENER;
             message.obj = event;
-            handler.sendMessage(message);
+            handlerMessage.sendMessage(message);
         }
     };
 
@@ -334,8 +328,22 @@ public class StudentService extends Service {
             Message message = Message.obtain();
             message.what = MESSAGE_EVENT_UNREGISTER_LISTENER;
             message.obj = event;
-            handler.sendMessage(message);
+            handlerMessage.sendMessage(message);
         }
     };
+
+    private void sleep(Handler handler, int millisecond) {
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    ihmiListener.onError(false);
+                } catch (RemoteException e) {
+                    e.printStackTrace();
+                }
+            }
+        }, millisecond);
+
+    }
 
 }
